@@ -849,6 +849,12 @@ struct TDICOMdata clear_dicom_data() {
 	d.isHasReal = false;
 	d.isHasImaginary = false;
 	d.isHasMagnitude = false;
+	// start dixon label fix
+	d.isHasWater = false;
+	d.isHasFat = false;
+	d.isHasInPhase = false;
+	d.isHasOutPhase = false;
+	// end dixon label fix
 	// d.maxGradDynVol = -1; //PAR/REC only
 	d.sliceOrient = kSliceOrientUnknown;
 	d.dateTime = (double)19770703150928.0;
@@ -4846,6 +4852,15 @@ struct TDCMdim { // DimensionIndexValues
 	bool isPhase;
 	bool isReal;
 	bool isImaginary;
+	// start dixon label fix
+	bool isWater;
+	bool isFat;
+	bool isInPhase;
+	bool isOutPhase;
+	// end dixon label fix
+	// start fieldmap fix
+	bool isRealIsPhaseMapHz;
+	// end fieldmap fix
 };
 
 void getFileNameX(char *pathParent, const char *path, int maxLen) { // if path is c:\d1\d2 then filename is 'd2'
@@ -5503,6 +5518,19 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 	bool isReal = false;
 	bool isImaginary = false;
 	bool isMagnitude = false;
+	// start dixon label fix
+	bool isWater = false;   // Philips Dixon: ImageType/legacy (2005,140F) token "W"
+	bool isFat = false;     // Philips Dixon: token "F"
+	bool isInPhase = false; // Philips Dixon: token "IP"
+	bool isOutPhase = false; // Philips Dixon: token "OP"
+	// end dixon label fix
+	// start fieldmap fix
+	// Per-frame mirror of d.isRealIsPhaseMapHz (which is "sticky" - set true once
+	// and never reset - so a single B0 frame anywhere in an Enhanced MR object
+	// would incorrectly mark every later Real frame as a field map too). Reset
+	// per frame like isReal/isWater/etc so it reflects only the current frame.
+	bool isRealIsPhaseMapHz = false;
+	// end fieldmap fix
 	d.seriesNum = -1;
 	// start issue 372:
 	vec3 sliceV; // cross-product of kOrientation 0020,0037
@@ -5628,13 +5656,52 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 						imageType = 2;
 					if (isPhase)
 						imageType = 3;
+					// start dixon label fix
+					if (isWater)
+						imageType = 4;
+					if (isFat)
+						imageType = 5;
+					if (isInPhase)
+						imageType = 6;
+					if (isOutPhase)
+						imageType = 7;
+					// end dixon label fix
 					int bvalNum = philMRImageDiffBValueNumber > 0 ? philMRImageDiffBValueNumber : 0;
 					int gradNum = gradientOrientationNumberPhilips > 0 ? gradientOrientationNumberPhilips : 0;
 					int volume = volumeNumber > 0 ? volumeNumber : 0;
-					int d2 = d.dimensionIndexValues[2];
-					int d3 = d.dimensionIndexValues[3];
+					// start dixon slice order fix
+					// d.dimensionIndexValues[2]/[3] are only refreshed for the current frame
+					// by dcmMultiLongs() up to index (nDimIndxVal-1); for files that declare
+					// fewer than 3/4 dimensions (e.g. a Philips Dixon recon block, which only
+					// declares 3: stack/in-stack/ImageTypeMR) these slots are left holding
+					// whatever the PREVIOUS frame's kludge rewrite wrote into them a few lines
+					// below (d.dimensionIndexValues[3] = imageType). Without this guard, d3
+					// silently carries the prior frame's imageType forward by one frame, which
+					// masquerades as a genuinely-varying dimension and corrupts the forward/
+					// reverse sort direction picked further down (maxVariableItem).
+					int d2 = (nDimIndxVal > 2) ? d.dimensionIndexValues[2] : 0;
+					int d3 = (nDimIndxVal > 3) ? d.dimensionIndexValues[3] : 0;
+					// end dixon slice order fix
 					if (d.aslFlags == kASL_FLAG_NONE) {
 						aslFlag = d2;
+						// start echo time sort fix
+						// Philips R12+ firmware can leave the DimensionIndexValues slot for
+						// "Effective Echo Time" at a constant 0 for plain multi-echo GRE/MESE
+						// series, even though the frames' actual EffectiveEchoTime (d.TE)
+						// genuinely varies (confirmed regression vs R5.x; DTI's "Private
+						// DiffusionOrder" dimension is unaffected on either version - see
+						// docs/PHILIPS_DIXON.md). When that happens d2 ties across every echo,
+						// which leaves nothing in dimIdx[] to distinguish them: qsort() is not
+						// stable, so tied frames' disk order can be scrambled unpredictably.
+						// Only kick in when d2 itself is uninformative (0). Verified against
+						// real DTI data (930 frames, both R5.7 and R12.3): Private
+						// DiffusionOrder is never 0, so genuine diffusion volumes never reach
+						// this branch - no need to also gate on bvalNum/gradNum, which Philips
+						// sets to a harmless constant default (seen: 1) even on non-diffusion
+						// series, so requiring them to be 0 wrongly blocked this fix entirely.
+						if ((d2 == 0) && (!isSameFloatGE(d.TE, 0.0)))
+							aslFlag = (int)roundf(d.TE * 1000.0f); // microsecond resolution key
+						// end echo time sort fix
 					}
 					for (int i = 0; i < nDimIndxVal; i++)
 						d.dimensionIndexValues[i] = 0;
@@ -5720,6 +5787,15 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 				dcmDim[numDimensionIndexValues].isPhase = isPhase;
 				dcmDim[numDimensionIndexValues].isReal = isReal;
 				dcmDim[numDimensionIndexValues].isImaginary = isImaginary;
+				// start dixon label fix
+				dcmDim[numDimensionIndexValues].isWater = isWater;
+				dcmDim[numDimensionIndexValues].isFat = isFat;
+				dcmDim[numDimensionIndexValues].isInPhase = isInPhase;
+				dcmDim[numDimensionIndexValues].isOutPhase = isOutPhase;
+				// end dixon label fix
+				// start fieldmap fix
+				dcmDim[numDimensionIndexValues].isRealIsPhaseMapHz = isRealIsPhaseMapHz;
+				// end fieldmap fix
 				dcmDim[numDimensionIndexValues].intenScalePhilips = d.intenScalePhilips;
 				dcmDim[numDimensionIndexValues].RWVScale = d.RWVScale;
 				dcmDim[numDimensionIndexValues].RWVIntercept = d.RWVIntercept;
@@ -6221,8 +6297,10 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 				// d.isDerived = true; //this would have 'i- y' skip MoCo images
 				isMoCo = true;
 			}
-			if ((slen > 5) && strstr(d.imageType, "B0") && strstr(d.imageType, "MAP"))
+			if ((slen > 5) && strstr(d.imageType, "B0") && strstr(d.imageType, "MAP")) {
 				d.isRealIsPhaseMapHz = true;
+				isRealIsPhaseMapHz = true; // start/end fieldmap fix: per-frame mirror, see declaration
+			}
 			if ((slen > 5) && strstr(d.imageType, "_ADC_"))
 				d.isDerived = true;
 			if ((slen > 5) && strstr(d.imageType, "_TRACEW_"))
@@ -6264,6 +6342,30 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 				d.isHasPhase = true;
 				isPhase = true;
 			}
+			// start dixon label fix
+			// Philips Dixon: water/fat/in-phase/out-of-phase tokens, always present (even on
+			// current R12+ software) via the legacy (2005,140F) per-frame ImageType, e.g.
+			// "DERIVED_PRIMARY_W_W_DERIVED" - the modern MRImageFrameTypeSequence spells these
+			// out as WATER/FAT/IN_PHASE/OUT_OF_PHASE instead, but that tag is not parsed here.
+			if (d.manufacturer == kMANUFACTURER_PHILIPS) {
+				if ((slen > 3) && (strstr(d.imageType, "_W_") != NULL)) {
+					d.isHasWater = true;
+					isWater = true;
+				}
+				if ((slen > 3) && (strstr(d.imageType, "_F_") != NULL)) {
+					d.isHasFat = true;
+					isFat = true;
+				}
+				if ((slen > 4) && (strstr(d.imageType, "_IP_") != NULL)) {
+					d.isHasInPhase = true;
+					isInPhase = true;
+				}
+				if ((slen > 4) && (strstr(d.imageType, "_OP_") != NULL)) {
+					d.isHasOutPhase = true;
+					isOutPhase = true;
+				}
+			}
+			// end dixon label fix
 			if ((slen > 6) && (strstr(d.imageType, "_REAL_") != NULL)) {
 				d.isHasReal = true;
 				isReal = true;
@@ -6373,6 +6475,15 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 			isReal = false;
 			isImaginary = false;
 			isMagnitude = false;
+			// start dixon label fix
+			isWater = false;
+			isFat = false;
+			isInPhase = false;
+			isOutPhase = false;
+			// end dixon label fix
+			// start fieldmap fix
+			isRealIsPhaseMapHz = false;
+			// end fieldmap fix
 			// see Table C.8-85 http://dicom.nema.org/medical/Dicom/2017c/output/chtml/part03/sect_C.8.13.3.html
 			if ((buffer[lPos] == 'R') && (toupper(buffer[lPos + 1]) == 'E'))
 				isReal = true;
@@ -9367,6 +9478,15 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 				dti4D->isPhase[i] = dcmDim[slice].isPhase;
 				dti4D->isReal[i] = dcmDim[slice].isReal;
 				dti4D->isImaginary[i] = dcmDim[slice].isImaginary;
+				// start dixon label fix
+				dti4D->isWater[i] = dcmDim[slice].isWater;
+				dti4D->isFat[i] = dcmDim[slice].isFat;
+				dti4D->isInPhase[i] = dcmDim[slice].isInPhase;
+				dti4D->isOutPhase[i] = dcmDim[slice].isOutPhase;
+				// end dixon label fix
+				// start fieldmap fix
+				dti4D->isRealIsPhaseMapHz[i] = dcmDim[slice].isRealIsPhaseMapHz;
+				// end fieldmap fix
 				dti4D->triggerDelayTime[i] = dcmDim[slice].triggerDelayTime;
 				dti4D->S[i].V[0] = dcmDim[slice].V[0];
 				dti4D->S[i].V[1] = dcmDim[slice].V[1];
