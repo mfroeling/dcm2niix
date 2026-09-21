@@ -5,13 +5,16 @@ handling, or anything that looks like a "which type is this frame" decision.
 
 ## Coverage tested
 
-Fixes here were verified against real Philips Enhanced MR data spanning
-software versions 5.1.x/5.7.x through 12.3.0, covering: classic and Enhanced
-MR SOP classes; Dixon source series (Magnitude/Real/Imaginary/Phase echoes)
-and Dixon recon series (Water/Fat/In-Phase/Out-of-Phase); plain multi-echo
-gradient-echo and multi-echo spin-echo (T2 mapping) series with no Dixon
-option set; and DTI/DWI series. Also verified clean against the project's
-in-tree regression suite (`dcm_qa`, `dcm_qa_nih`, `dcm_qa_uih`).
+Fixes here were verified against real Philips data spanning software
+versions 5.1.x/5.7.x through 12.3.0, covering: both classic (one file per
+frame) and Enhanced MR (single multiframe object) SOP classes; Dixon source
+series (Magnitude/Real/Imaginary/Phase echoes) and Dixon recon series
+(Water/Fat/In-Phase/Out-of-Phase) from both gradient-echo and Turbo-Spin-Echo
+Dixon sequences (the latter with recon-only series and no accompanying
+source echoes); plain multi-echo gradient-echo and multi-echo spin-echo (T2
+mapping) series with no Dixon option set; and DTI/DWI series. Also verified
+clean against the project's in-tree regression suite (`dcm_qa`, `dcm_qa_nih`,
+`dcm_qa_uih`).
 
 ## The problem
 
@@ -57,7 +60,7 @@ needed — only the short-code tokens `_W_`/`_F_`/`_IP_`/`_OP_`.
 ## Fix 1 — recognize the tokens (`// start/end dixon label fix`)
 
 Mirrors the existing `isReal`/`isImaginary`/`isPhase`/`isMagnitude` machinery
-one-for-one, gated behind `d.manufacturer == kMANUFACTURER_PHILIPS`:
+one-for-one:
 
 - `nii_dicom.h`: four new `TDICOMdata` booleans (`isHasWater`, `isHasFat`,
   `isHasInPhase`, `isHasOutPhase`), four new `TDTI4D` per-frame arrays.
@@ -65,6 +68,18 @@ one-for-one, gated behind `d.manufacturer == kMANUFACTURER_PHILIPS`:
   alongside the others when `ComplexImageComponent` is (re-)parsed per frame,
   and — critically — fed into the per-frame `imageType` index used to keep
   volumes apart (values 4–7, after the existing 0=magnitude/1=real/2=imaginary/3=phase).
+  The four checks are not manufacturer-gated, matching the pre-existing
+  unguarded `_R_`/`_M_`/`_I_`/`_P_` checks right above them: on classic
+  (non-Enhanced) DICOM, `ImageType` (0008,0008) is encountered well before
+  `Manufacturer` (0008,0070) in ascending tag order, so a manufacturer check
+  at this point would see `d.manufacturer` still unset and silently never
+  fire — verified directly on a classic Philips file (`ImageType` was the
+  2nd tag read, `Manufacturer` the 19th). This never showed up on Enhanced MR
+  data because the equivalent per-frame tokens live in nested sequences
+  parsed well after the top-level `Manufacturer` tag. `W`/`F`/`IP`/`OP` are
+  not standard DICOM `ImageType` enumerations, so matching them regardless of
+  vendor carries negligible collision risk — confirmed against the regression
+  suite's Siemens/GE/UIH/Canon reference data (no new matches).
 - `nii_dicom_batch.cpp`: `isSameSet()` (classic per-instance stacking) and the
   `gradDynVol` equality test inside `saveDcm2Nii()` (intra-file volume
   splitting for Enhanced MR) both gained a check on the four new flags, so
@@ -82,6 +97,17 @@ one-for-one, gated behind `d.manufacturer == kMANUFACTURER_PHILIPS`:
   dataset-level passthrough for all four Dixon outputs — identical whether
   the file was Water or Fat — so anything reading the JSON instead of the
   filename had no way to tell them apart.
+- `nii_dicom.cpp`'s `isScaleOrTEVaries` computation (the "record variations
+  in TE" loop) already compared `isPhase`/`isReal`/`isImaginary` across
+  volumes to decide whether `saveDcm2Nii()` needs to split a file into
+  separate series at all — a gate upstream of, and independent from, the
+  `gradDynVol` equality check above. The four Dixon flags were missing from
+  it. Series where every Dixon type happens to share the same (or absent) TE
+  — e.g. Turbo-Spin-Echo Dixon, where Water/Fat/In-Phase/Out-of-Phase all
+  share one fixed TE — never set `isTEvaries`, so `saveDcm2Nii()` took its
+  early-return path and bundled all four types into one multi-volume file
+  instead of splitting them. Fixed by adding the same four comparisons
+  alongside the existing `isPhase`/`isReal`/`isImaginary` ones.
 
 ## Fix 2 — stale dimension-index carryover (`// start/end dixon slice order fix`)
 
@@ -232,7 +258,15 @@ correct, non-leaking per-frame value.
 
 Every new code path is reached only when the data itself proves it applies:
 
-1. `d.manufacturer == kMANUFACTURER_PHILIPS` gates all new token/flag logic.
+1. The `W`/`F`/`IP`/`OP` token match itself is not manufacturer-gated (see
+   Fix 1), but everything downstream that consumes the resulting flags —
+   `isSameSet()`, `isKludgeIssue809`, `isScaleOrTEVaries`'s per-frame
+   comparisons, the `gradDynVol` equality check — either only runs inside
+   branches already gated on `d.manufacturer == kMANUFACTURER_PHILIPS`, or
+   only affects data where the flags are actually set. A non-Philips file
+   would need `_W_`/`_F_`/`_IP_`/`_OP_` as a literal substring in its own
+   `ImageType`, which no other vendor uses, before any of this logic would
+   even engage.
 2. The slice-order fix (Fix 2) only changes behavior inside the existing
    `isKludgeIssue809` branch (Philips Enhanced MR, software version > R10),
    and only for frames where `nDimIndxVal` is smaller than the slot being
