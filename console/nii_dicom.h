@@ -224,6 +224,15 @@ struct TDTI4D {
 	bool isReal[kMaxDTI4D];
 	bool isImaginary[kMaxDTI4D];
 	bool isPhase[kMaxDTI4D];
+	// start dixon label fix
+	bool isWater[kMaxDTI4D];
+	bool isFat[kMaxDTI4D];
+	bool isInPhase[kMaxDTI4D];
+	bool isOutPhase[kMaxDTI4D];
+	// end dixon label fix
+	// start fieldmap fix
+	bool isRealIsPhaseMapHz[kMaxDTI4D];
+	// end fieldmap fix
 	float repetitionTimeExcitation, repetitionTimeInversion;
 	// deID_CS[] moved to TDICOMdata (per-file, not per-pass) — see comment there.
 };
@@ -324,7 +333,9 @@ struct TDICOMdata {
 	// would reflect whichever file was parsed last. Issue #877.
 	struct TDeIDCodeSequence *deID_CS;
 	struct TCSAdata CSA;
-	bool isYBRfull, isDeepLearning, isVariableFlipAngle, isQuadruped, isRealIsPhaseMapHz, isPrivateCreatorRemap, isHasOverlay, isEPI, isIR, isPartialFourier, isDiffusion, isVectorFromBMatrix, isRawDataStorage, isMicroscopy, isGrayscaleSoftcopyPresentationState, isStackableSeries, isCoilVaries, isNonParallelSlices, isBVecWorldCoordinates, isSegamiOasis, isXA10A, isXA, isScaleOrTEVaries, isScaleVariesEnh, isDerived, isXRay, isMultiEcho, isValid, is3DAcq, is2DAcq, isExplicitVR, isLittleEndian, isPlanarRGB, isSigned, isHasPhase, isHasImaginary, isHasReal, isHasMagnitude, isHasMixed, isFloat, isResampled, isLocalizer, isXAPhysio, isCMRRPhysio, isMRS, isMrsRef, isNoRF;
+	bool isYBRfull, isDeepLearning, isVariableFlipAngle, isQuadruped, isRealIsPhaseMapHz, isPrivateCreatorRemap, isHasOverlay, isEPI, isIR, isPartialFourier, isDiffusion, isVectorFromBMatrix, isRawDataStorage, isMicroscopy, isGrayscaleSoftcopyPresentationState, isStackableSeries, isCoilVaries, isNonParallelSlices, isBVecWorldCoordinates, isSegamiOasis, isXA10A, isXA, isScaleOrTEVaries, isScaleVariesEnh, isDerived, isXRay, isMultiEcho, isValid, is3DAcq, is2DAcq, isExplicitVR, isLittleEndian, isPlanarRGB, isSigned, isHasPhase, isHasImaginary, isHasReal, isHasMagnitude, isHasMixed,
+		/* start dixon label fix */ isHasWater, isHasFat, isHasInPhase, isHasOutPhase, /* end dixon label fix */
+		isFloat, isResampled, isLocalizer, isXAPhysio, isCMRRPhysio, isMRS, isMrsRef, isNoRF;
 	int xaPhysioOffset, xaPhysioBytes; // file offset and length of the (7FE1,1010) physio payload (gzip-XML when isXAPhysio, raw VE11C blob when isCMRRPhysio)
 	int dataPointColumns;			   // MRS only: (0028,9002) SpectroscopyAcquisitionDataColumns (complex points per FID)
 	double spectralWidth;			   // MRS only: (0018,9052) SpectralWidth in Hz; dwell time = 1/spectralWidth (s). TransmitterFrequency (0018,9098 MHz) reuses imagingFrequency.

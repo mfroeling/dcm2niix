@@ -2228,6 +2228,17 @@ tse3d: T2*/
 			fprintf(fp, "\", \"IMAGINARY");
 		if ((isHz) && ((strstr(d.imageType, "_FIELDMAPHZ_") == NULL)))
 			fprintf(fp, "\", \"FIELDMAPHZ");
+		// start dixon label fix: surface the resolved Dixon type so consumers of the
+		// JSON sidecar don't have to guess from the filename suffix or echo time.
+		if ((d.isHasWater) && (strstr(d.imageType, "_WATER_") == NULL))
+			fprintf(fp, "\", \"WATER");
+		if ((d.isHasFat) && (strstr(d.imageType, "_FAT_") == NULL))
+			fprintf(fp, "\", \"FAT");
+		if ((d.isHasInPhase) && (strstr(d.imageType, "_IN_PHASE_") == NULL))
+			fprintf(fp, "\", \"IN_PHASE");
+		if ((d.isHasOutPhase) && (strstr(d.imageType, "_OUT_OF_PHASE_") == NULL))
+			fprintf(fp, "\", \"OUT_OF_PHASE");
+		// end dixon label fix
 		fprintf(fp, "\"],\n");
 	}
 	if (strlen(d.imageTypeText) > 0) {
@@ -5462,6 +5473,33 @@ int nii_createFilename(struct TDICOMdata dcm, char *niiFilename, struct TDCMopts
 		sprintf(mrifsStruct.namePostFixes, "%s_ph", mrifsStruct.namePostFixes);
 #endif
 	}
+	// start dixon label fix: human-readable suffixes for Philips Dixon water/fat/
+	// in-phase/out-of-phase outputs, same postfix mechanism as _real/_imaginary/_ph above
+	if ((isAddNamePostFixes) && (dcm.isHasWater)) {
+		strcat(outname, "_water");
+#ifdef USING_DCM2NIIXFSWRAPPER
+		sprintf(mrifsStruct.namePostFixes, "%s_water", mrifsStruct.namePostFixes);
+#endif
+	}
+	if ((isAddNamePostFixes) && (dcm.isHasFat)) {
+		strcat(outname, "_fat");
+#ifdef USING_DCM2NIIXFSWRAPPER
+		sprintf(mrifsStruct.namePostFixes, "%s_fat", mrifsStruct.namePostFixes);
+#endif
+	}
+	if ((isAddNamePostFixes) && (dcm.isHasInPhase)) {
+		strcat(outname, "_inphase");
+#ifdef USING_DCM2NIIXFSWRAPPER
+		sprintf(mrifsStruct.namePostFixes, "%s_inphase", mrifsStruct.namePostFixes);
+#endif
+	}
+	if ((isAddNamePostFixes) && (dcm.isHasOutPhase)) {
+		strcat(outname, "_outphase");
+#ifdef USING_DCM2NIIXFSWRAPPER
+		sprintf(mrifsStruct.namePostFixes, "%s_outphase", mrifsStruct.namePostFixes);
+#endif
+	}
+	// end dixon label fix
 	if ((isAddNamePostFixes) && (dcm.aslFlags == kASL_FLAG_NONE) && (dcm.triggerDelayTime >= 1) && (dcm.manufacturer != kMANUFACTURER_GE)) { // issue 336 GE uses this for slice timing
 		snprintf(newstr, PATH_MAX, "_t%d", (int)roundf(dcm.triggerDelayTime));
 		strcat(outname, newstr);
@@ -11750,6 +11788,16 @@ int saveDcm2NiiCore(int nConvert, struct TDCMsort dcmSort[], struct TDICOMdata d
 					dcmList[indx0].isHasReal = true;
 				if (dcmList[dcmSort[i].indx].isHasImaginary)
 					dcmList[indx0].isHasImaginary = true;
+				// start dixon label fix
+				if (dcmList[dcmSort[i].indx].isHasWater)
+					dcmList[indx0].isHasWater = true;
+				if (dcmList[dcmSort[i].indx].isHasFat)
+					dcmList[indx0].isHasFat = true;
+				if (dcmList[dcmSort[i].indx].isHasInPhase)
+					dcmList[indx0].isHasInPhase = true;
+				if (dcmList[dcmSort[i].indx].isHasOutPhase)
+					dcmList[indx0].isHasOutPhase = true;
+				// end dixon label fix
 			}
 			// next: detect variable inter-volume time https://github.com/rordenlab/dcm2niix/issues/184
 			// if ((nConvert > 1) && ((dcmList[indx0].modality == kMODALITY_PT)|| (opts.isForceOnsetTimes))) {
@@ -13935,8 +13983,16 @@ int saveDcm2Nii(int nConvert, struct TDCMsort dcmSort[], struct TDICOMdata dcmLi
 		int iv = (i * dim3); // intenIntercept and intenScale can vary within a volume
 		for (int j = 0; j < i; j++) {
 			int jv = (j * dim3);
-			if (((dcmList[indx].aslFlags != kASL_FLAG_NONE) || isSameFloatGE(dti4D->triggerDelayTime[i], dti4D->triggerDelayTime[j])) && (dti4D->intenIntercept[iv] == dti4D->intenIntercept[jv]) && (dti4D->intenScale[iv] == dti4D->intenScale[jv]) && (dti4D->isReal[i] == dti4D->isReal[j]) && (dti4D->isImaginary[i] == dti4D->isImaginary[j]) && (dti4D->isPhase[i] == dti4D->isPhase[j]) && (dti4D->TE[i] == dti4D->TE[j]))
+			// start dixon label fix: added isWater/isFat/isInPhase/isOutPhase to the equality
+			// test below, so Dixon water/fat/in-phase/out-of-phase volumes (which all report
+			// ComplexImageComponent=MAGNITUDE) are no longer treated as repeats of each other.
+			// start fieldmap fix: added isRealIsPhaseMapHz too, so a B0 field map (Real,
+			// isRealIsPhaseMapHz=true) is never tied together with an ordinary Real echo
+			// (isRealIsPhaseMapHz=false) even when both otherwise match.
+			if (((dcmList[indx].aslFlags != kASL_FLAG_NONE) || isSameFloatGE(dti4D->triggerDelayTime[i], dti4D->triggerDelayTime[j])) && (dti4D->intenIntercept[iv] == dti4D->intenIntercept[jv]) && (dti4D->intenScale[iv] == dti4D->intenScale[jv]) && (dti4D->isReal[i] == dti4D->isReal[j]) && (dti4D->isImaginary[i] == dti4D->isImaginary[j]) && (dti4D->isPhase[i] == dti4D->isPhase[j]) && (dti4D->isWater[i] == dti4D->isWater[j]) && (dti4D->isFat[i] == dti4D->isFat[j]) && (dti4D->isInPhase[i] == dti4D->isInPhase[j]) && (dti4D->isOutPhase[i] == dti4D->isOutPhase[j]) && (dti4D->isRealIsPhaseMapHz[i] == dti4D->isRealIsPhaseMapHz[j]) && (dti4D->TE[i] == dti4D->TE[j]))
 				dti4D->gradDynVol[i] = dti4D->gradDynVol[j];
+			// end fieldmap fix
+			// end dixon label fix
 		}
 		if (dti4D->gradDynVol[i] == 0) {
 			series++;
@@ -13993,6 +14049,15 @@ int saveDcm2Nii(int nConvert, struct TDCMsort dcmSort[], struct TDICOMdata dcmLi
 				dcmList[indx].isHasPhase = dti4D->isPhase[i];
 				dcmList[indx].isHasReal = dti4D->isReal[i];
 				dcmList[indx].isHasImaginary = dti4D->isImaginary[i];
+				// start dixon label fix
+				dcmList[indx].isHasWater = dti4D->isWater[i];
+				dcmList[indx].isHasFat = dti4D->isFat[i];
+				dcmList[indx].isHasInPhase = dti4D->isInPhase[i];
+				dcmList[indx].isHasOutPhase = dti4D->isOutPhase[i];
+				// end dixon label fix
+				// start fieldmap fix
+				dcmList[indx].isRealIsPhaseMapHz = dti4D->isRealIsPhaseMapHz[i];
+				// end fieldmap fix
 				dcmList[indx].triggerDelayTime = dti4D->triggerDelayTime[i];
 				dcmList[indx].isHasMagnitude = false;
 				dcmList[indx].echoNum = echoNum[i];
@@ -14257,6 +14322,18 @@ bool isSameSet(struct TDICOMdata d1, struct TDICOMdata d2, struct TDCMopts *opts
 		warnings->phaseVaries = true;
 		return false;
 	}
+	// start dixon label fix
+	// Philips Dixon: water/fat/in-phase/out-of-phase are distinct reconstructions that
+	// happen to all report ComplexImageComponent=MAGNITUDE, so without this check they
+	// would otherwise be silently stacked together as if they were the same volume.
+	if ((d1.isHasWater != d2.isHasWater) || (d1.isHasFat != d2.isHasFat) ||
+		(d1.isHasInPhase != d2.isHasInPhase) || (d1.isHasOutPhase != d2.isHasOutPhase)) {
+		if (!warnings->phaseVaries)
+			printMessage("Slices not stacked: some are Dixon water/fat/in-phase/out-of-phase maps, others are not. Instances %d %d\n", d1.imageNum, d2.imageNum);
+		warnings->phaseVaries = true;
+		return false;
+	}
+	// end dixon label fix
 	if (!(isSameFloat(d1.TR, d2.TR))) {
 		if (d1.numberOfTR > 1)
 			return false;

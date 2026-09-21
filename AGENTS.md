@@ -12,6 +12,7 @@ Domain hazards live in on-demand docs — read the relevant one before changing 
 - `docs/BIDS_REPROIN.md` — BIDS sidecars, physio output, classification, `BidsGuess`, `-f %h/%H`, `reproin.cpp`, `tools/reproinx.py`.
 - `docs/MRS.md` — MR Spectroscopy, NIfTI-MRS ecode 44, `tools/mrs_post.py`.
 - `docs/siemens.md` — reference table for `setBidsSiemens()` BIDS-guess cascade + the `MRWeightingGuess()` T1/PD/T2/FLAIR heuristic.
+- `docs/PHILIPS_DIXON.md` — Philips Dixon water/fat/in-phase/out-of-phase detection, the Enhanced MR dimension-index kludge, and why `nDimIndxVal`-gated reads matter. Read before touching Philips Enhanced MR volume splitting or dimension-index handling.
 
 ## Build / Test / Lint
 
