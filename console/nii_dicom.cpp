@@ -5687,18 +5687,15 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 						// start echo time sort fix
 						// Philips R12+ firmware can leave the DimensionIndexValues slot for
 						// "Effective Echo Time" at a constant 0 for plain multi-echo GRE/MESE
-						// series, even though the frames' actual EffectiveEchoTime (d.TE)
-						// genuinely varies (confirmed regression vs R5.x; DTI's "Private
-						// DiffusionOrder" dimension is unaffected on either version - see
-						// docs/PHILIPS_DIXON.md). When that happens d2 ties across every echo,
-						// which leaves nothing in dimIdx[] to distinguish them: qsort() is not
-						// stable, so tied frames' disk order can be scrambled unpredictably.
-						// Only kick in when d2 itself is uninformative (0). Verified against
-						// real DTI data (930 frames, both R5.7 and R12.3): Private
-						// DiffusionOrder is never 0, so genuine diffusion volumes never reach
-						// this branch - no need to also gate on bvalNum/gradNum, which Philips
-						// sets to a harmless constant default (seen: 1) even on non-diffusion
-						// series, so requiring them to be 0 wrongly blocked this fix entirely.
+						// series, even though the frame's actual EffectiveEchoTime (d.TE)
+						// genuinely varies (see docs/PHILIPS_DIXON.md). When that happens d2
+						// ties across every echo, leaving nothing in dimIdx[] to distinguish
+						// them: qsort() is not stable, so tied frames' disk order can be
+						// scrambled. Only fires when d2 is uninformative (0); genuine DTI/DWI
+						// volumes key off a different dimension slot (Private DiffusionOrder)
+						// and are unaffected. bvalNum/gradNum are not checked here: Philips
+						// sets those private tags to a constant default even on non-diffusion
+						// series, so they don't reliably indicate diffusion data.
 						if ((d2 == 0) && (!isSameFloatGE(d.TE, 0.0)))
 							aslFlag = (int)roundf(d.TE * 1000.0f); // microsecond resolution key
 						// end echo time sort fix
@@ -6347,23 +6344,27 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 			// current R12+ software) via the legacy (2005,140F) per-frame ImageType, e.g.
 			// "DERIVED_PRIMARY_W_W_DERIVED" - the modern MRImageFrameTypeSequence spells these
 			// out as WATER/FAT/IN_PHASE/OUT_OF_PHASE instead, but that tag is not parsed here.
-			if (d.manufacturer == kMANUFACTURER_PHILIPS) {
-				if ((slen > 3) && (strstr(d.imageType, "_W_") != NULL)) {
-					d.isHasWater = true;
-					isWater = true;
-				}
-				if ((slen > 3) && (strstr(d.imageType, "_F_") != NULL)) {
-					d.isHasFat = true;
-					isFat = true;
-				}
-				if ((slen > 4) && (strstr(d.imageType, "_IP_") != NULL)) {
-					d.isHasInPhase = true;
-					isInPhase = true;
-				}
-				if ((slen > 4) && (strstr(d.imageType, "_OP_") != NULL)) {
-					d.isHasOutPhase = true;
-					isOutPhase = true;
-				}
+			// No manufacturer gate: on classic (non-Enhanced) DICOM, ImageType (0008,0008)
+			// is encountered well before Manufacturer (0008,0070) in ascending tag order, so
+			// d.manufacturer would still be unset here - same reason the standard _R_/_M_/
+			// _I_/_P_ checks just above are also ungated. These tokens are specific enough
+			// (single/double letters between underscores, not standard DICOM enumerations)
+			// that matching them regardless of vendor carries negligible collision risk.
+			if ((slen > 3) && (strstr(d.imageType, "_W_") != NULL)) {
+				d.isHasWater = true;
+				isWater = true;
+			}
+			if ((slen > 3) && (strstr(d.imageType, "_F_") != NULL)) {
+				d.isHasFat = true;
+				isFat = true;
+			}
+			if ((slen > 4) && (strstr(d.imageType, "_IP_") != NULL)) {
+				d.isHasInPhase = true;
+				isInPhase = true;
+			}
+			if ((slen > 4) && (strstr(d.imageType, "_OP_") != NULL)) {
+				d.isHasOutPhase = true;
+				isOutPhase = true;
 			}
 			// end dixon label fix
 			if ((slen > 6) && (strstr(d.imageType, "_REAL_") != NULL)) {
@@ -9503,6 +9504,22 @@ struct TDICOMdata readDICOMx(char *fname, struct TDCMprefs *prefs, struct TDTI4D
 					d.isScaleOrTEVaries = true;
 				if (dti4D->isImaginary[i] != isImaginary)
 					d.isScaleOrTEVaries = true;
+				// start dixon label fix
+				// Water/Fat/In-Phase/Out-of-Phase frames can all share the same (or
+				// absent) TE - e.g. Turbo-Spin-Echo Dixon, where all four types share
+				// a single fixed TE. Without this check, isTEvaries stays false and
+				// saveDcm2Nii() takes the early-return path that skips per-type
+				// splitting entirely, bundling all four types into one multi-volume
+				// file instead of four separate outputs.
+				if (dti4D->isWater[i] != isWater)
+					d.isScaleOrTEVaries = true;
+				if (dti4D->isFat[i] != isFat)
+					d.isScaleOrTEVaries = true;
+				if (dti4D->isInPhase[i] != isInPhase)
+					d.isScaleOrTEVaries = true;
+				if (dti4D->isOutPhase[i] != isOutPhase)
+					d.isScaleOrTEVaries = true;
+				// end dixon label fix
 				/*Philips can vary intensity scalings for separate slices within a volume!
 				dti4D->intenScale[i] = dcmDim[slice].intenScale;
 				dti4D->intenIntercept[i] = dcmDim[slice].intenIntercept;
